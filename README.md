@@ -30,17 +30,22 @@ This project is designed as both a coursework submission and a portfolio-ready r
 ```text
 LDPC-Codes-Implementation/
 +-- results/
-|   +-- ber_awgn_with_shannon.png
-|   +-- ber_bec_with_capacity.png
-|   +-- ber_bsc_with_capacity.png
-|   +-- channel_comparison.png
-|   +-- experiment_summary.json
+|   +-- figures/
+|   |   +-- ber_awgn_with_shannon.png
+|   |   +-- ber_bec_with_capacity.png
+|   |   +-- ber_bsc_with_capacity.png
+|   |   +-- channel_comparison.png
+|   +-- tables/
+|   +-- summaries/
+|       +-- experiment_summary.json
++-- legacy/
+|   +-- experiments_20_10.py
+|   +-- simple_demo_20_10.py
++-- tests/
 +-- experiment.py
-+-- experiments.py
 +-- generate_report.py
 +-- ldpc.py
 +-- ldpc_construction.py
-+-- simple_demo.py
 +-- report.pdf
 +-- requirements.txt
 +-- README.md
@@ -52,11 +57,13 @@ LDPC-Codes-Implementation/
 | --- | --- |
 | `ldpc.py` | Core LDPC operations, channel models, capacity helpers, and decoders. |
 | `ldpc_construction.py` | Gallager regular LDPC construction utilities for target block lengths. |
-| `simple_demo.py` | Small interactive LDPC demonstration using a readable `(20,10)` code. |
-| `experiments.py` | Compact experiment script for demonstration-scale BER plots. |
 | `experiment.py` | Larger Monte Carlo simulation script for BSC, AWGN, and BEC experiments. |
 | `generate_report.py` | Generates the project PDF report. |
-| `results/` | Generated figures and experiment summary outputs. |
+| `results/figures/` | Generated BER and channel comparison figures. |
+| `results/tables/` | Reserved for generated tables. |
+| `results/summaries/` | Generated JSON summaries and simulation metadata. |
+| `legacy/` | Older small-code `(20,10)` demonstration scripts kept for reference. |
+| `tests/` | Test directory for future validation scripts. |
 | `report.pdf` | Generated project report. |
 | `requirements.txt` | Python package dependencies. |
 
@@ -105,28 +112,23 @@ Dependencies are listed in [`requirements.txt`](requirements.txt).
 
 ## Usage Examples
 
-Run the simple LDPC demonstration:
+Run the main Monte Carlo simulation:
 
 ```bash
-python simple_demo.py
+python experiment.py
 ```
 
-Run the scripted demo only, without the interactive prompt:
+Generate the project report:
 
 ```bash
-python simple_demo.py --no-interactive
+python generate_report.py
 ```
 
-Show larger LDPC construction information for target block lengths near 200 and 500:
+The older small-code `(20,10)` demo scripts are preserved in `legacy/` for reference:
 
 ```bash
-python simple_demo.py --large-info
-```
-
-Run the compact experiment script:
-
-```bash
-python experiments.py
+python legacy/simple_demo_20_10.py
+python legacy/experiments_20_10.py
 ```
 
 ## Running Simulations
@@ -137,7 +139,7 @@ For the main Monte Carlo simulations:
 python experiment.py
 ```
 
-The main simulation script generates BER curves for BSC, AWGN, and BEC channels and saves output figures to the `results/` directory.
+The main simulation script generates BER curves for BSC, AWGN, and BEC channels and saves output figures to the `results/figures/` directory. JSON simulation summaries are saved to `results/summaries/`.
 
 For a faster smoke test:
 
@@ -188,28 +190,28 @@ The generated report summarizes the LDPC construction, encoding process, channel
 
 ## Results
 
-The following plots are generated in the `results/` directory. They can be updated by rerunning the simulation scripts.
+The following plots are generated in the `results/figures/` directory. They can be updated by rerunning the simulation scripts.
 
 ### BSC BER with Capacity Comparison
 
-![BSC BER with Capacity](results/ber_bsc_with_capacity.png)
+![BSC BER with Capacity](results/figures/ber_bsc_with_capacity.png)
 
 ### AWGN BER with Shannon Limit
 
-![AWGN BER with Shannon Limit](results/ber_awgn_with_shannon.png)
+![AWGN BER with Shannon Limit](results/figures/ber_awgn_with_shannon.png)
 
 ### BEC BER with Capacity Comparison
 
-![BEC BER with Capacity](results/ber_bec_with_capacity.png)
+![BEC BER with Capacity](results/figures/ber_bec_with_capacity.png)
 
 ### Channel Comparison
 
-![Channel Comparison](results/channel_comparison.png)
+![Channel Comparison](results/figures/channel_comparison.png)
 
 The numerical simulation summary is saved in:
 
 ```text
-results/experiment_summary.json
+results/summaries/experiment_summary.json
 ```
 
 ## Technical Scope

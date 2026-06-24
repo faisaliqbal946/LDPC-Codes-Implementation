@@ -26,10 +26,12 @@ Run:
   EXPERIMENT_FRAMES=250 python experiment.py  # default-ish (edit defaults below)
   EXPERIMENT_FRAMES=1000 python experiment.py # smoother curves (slow)
 
-Outputs (results/):
+Outputs:
+  results/figures/
   ber_bsc_with_capacity.png
   ber_awgn_with_shannon.png
   ber_bec_with_capacity.png
+  results/summaries/
   experiment_summary.json
 """
 
@@ -97,7 +99,11 @@ if _env_bool("EXPERIMENT_QUICK", default=False):
 SHANNON_REF_DB = 0.187
 
 RESULTS_DIR = "results"
-os.makedirs(RESULTS_DIR, exist_ok=True)
+FIGURES_DIR = os.path.join(RESULTS_DIR, "figures")
+TABLES_DIR = os.path.join(RESULTS_DIR, "tables")
+SUMMARIES_DIR = os.path.join(RESULTS_DIR, "summaries")
+for _dir in (FIGURES_DIR, TABLES_DIR, SUMMARIES_DIR):
+    os.makedirs(_dir, exist_ok=True)
 RNG = np.random.default_rng(RNG_SEED)
 
 H, G, col_order, K, M, RATE, N = build_ldpc_for_target_length(
@@ -507,9 +513,9 @@ def main() -> int:
     res_bec = run_bec(BEC_EPS)
     _phase_done("BEC", t0, 4)
 
-    p_bsc = os.path.join(RESULTS_DIR, "ber_bsc_with_capacity.png")
-    p_awgn = os.path.join(RESULTS_DIR, "ber_awgn_with_shannon.png")
-    p_bec = os.path.join(RESULTS_DIR, "ber_bec_with_capacity.png")
+    p_bsc = os.path.join(FIGURES_DIR, "ber_bsc_with_capacity.png")
+    p_awgn = os.path.join(FIGURES_DIR, "ber_awgn_with_shannon.png")
+    p_bec = os.path.join(FIGURES_DIR, "ber_bec_with_capacity.png")
     t0 = time.perf_counter()
     plot_bsc(res_bsc, p_bsc)
     plot_awgn(res_awgn, unc_awgn_emp, p_awgn)
@@ -555,7 +561,7 @@ def main() -> int:
         },
         "validation_issues": issues,
     }
-    jp = os.path.join(RESULTS_DIR, "experiment_summary.json")
+    jp = os.path.join(SUMMARIES_DIR, "experiment_summary.json")
     with open(jp, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print("Wrote", jp)
