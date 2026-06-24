@@ -3,69 +3,69 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Course](https://img.shields.io/badge/Course-Information%20Theory-green)
 ![Topic](https://img.shields.io/badge/Topic-LDPC%20Codes-purple)
-![License](https://img.shields.io/badge/License-Academic-lightgrey)
+![Status](https://img.shields.io/badge/Scope-Coursework%20Simulation-lightgrey)
 
-A Python implementation and experimental study of **Low-Density Parity-Check (LDPC) codes** for an Information Theory course project. The repository includes Gallager-style LDPC code construction, systematic encoding over GF(2), multiple channel models, iterative decoders, Monte Carlo bit error rate (BER) simulations, capacity comparisons, an interactive demonstration, and automatic PDF report generation.
+## Project Overview
 
-This project is designed as both a coursework submission and a portfolio-ready research foundation for channel coding, information theory, and error-correcting code experiments.
+This repository implements and evaluates a large finite-length Low-Density Parity-Check (LDPC) code for an Information Theory project.
 
-## Key Features
+The main workflow targets a length-200 design request and resolves it to the valid Gallager-regular block length:
+
+```text
+(N, K) = (204, 104)
+M = 100 parity checks
+R = K / N ~= 0.5098
+```
+
+The project studies this `(204,104)` LDPC code over BSC, AWGN, and BEC channels using Monte Carlo simulation. It reports BER, FER, convergence rate, average decoder iterations, and signed coding gain. The results are coursework-level experimental results, not capacity-achieving claims.
+
+## Features
 
 - Gallager regular LDPC parity-check matrix construction
-- Systematic generator matrix construction over GF(2)
-- LDPC encoding and syndrome verification
+- GF(2) rank analysis and actual code-rate diagnostics
+- Systematic encoding from generator matrices
 - Binary Symmetric Channel (BSC)
-- Additive White Gaussian Noise (AWGN) channel
+- Additive White Gaussian Noise (AWGN) channel with BPSK LLRs
 - Binary Erasure Channel (BEC)
-- Bit-Flipping decoder for hard-decision decoding
-- Belief Propagation (BP) decoder for soft-decision decoding
-- Min-Sum decoder as a lower-complexity BP approximation
-- Monte Carlo BER simulations across channel parameters
-- Shannon limit and channel capacity comparisons
-- Interactive LDPC demonstration for step-by-step decoding intuition
-- Automatic report generation as a PDF
+- Bit-Flip decoder for BSC hard-decision decoding
+- Belief Propagation decoder
+- Min-Sum decoder
+- Monte Carlo BER and FER simulations
+- Convergence-rate and average-iteration tracking
+- Signed coding-gain calculation at every channel point
+- Validation warnings for suspicious or poor decoder behavior
+- PDF report generation from saved figures, tables, and summary JSON
 
 ## Project Structure
 
 ```text
 LDPC-Codes-Implementation/
-+-- results/
-|   +-- figures/
-|   |   +-- ber_awgn_with_shannon.png
-|   |   +-- ber_bec_with_capacity.png
-|   |   +-- ber_bsc_with_capacity.png
-|   |   +-- channel_comparison.png
-|   +-- tables/
-|   +-- summaries/
-|       +-- experiment_summary.json
-+-- legacy/
-|   +-- experiments_20_10.py
-|   +-- simple_demo_20_10.py
-+-- tests/
 +-- experiment.py
 +-- generate_report.py
 +-- ldpc.py
 +-- ldpc_construction.py
-+-- report.pdf
 +-- requirements.txt
-+-- README.md
++-- report.pdf
++-- results/
+|   +-- figures/
+|   |   +-- bsc_ber_fer.png
+|   |   +-- awgn_ber_fer.png
+|   |   +-- bec_ber_fer.png
+|   |   +-- decoder_convergence.png
+|   |   +-- coding_gain_summary.png
+|   +-- tables/
+|   |   +-- bsc_results.csv
+|   |   +-- awgn_results.csv
+|   |   +-- bec_results.csv
+|   +-- summaries/
+|       +-- experiment_summary.json
++-- tests/
++-- legacy/
+    +-- experiments_20_10.py
+    +-- simple_demo_20_10.py
 ```
 
-### File Overview
-
-| Path | Description |
-| --- | --- |
-| `ldpc.py` | Core LDPC operations, channel models, capacity helpers, and decoders. |
-| `ldpc_construction.py` | Gallager regular LDPC construction utilities for target block lengths. |
-| `experiment.py` | Larger Monte Carlo simulation script for BSC, AWGN, and BEC experiments. |
-| `generate_report.py` | Generates the project PDF report. |
-| `results/figures/` | Generated BER and channel comparison figures. |
-| `results/tables/` | Reserved for generated tables. |
-| `results/summaries/` | Generated JSON summaries and simulation metadata. |
-| `legacy/` | Older small-code `(20,10)` demonstration scripts kept for reference. |
-| `tests/` | Test directory for future validation scripts. |
-| `report.pdf` | Generated project report. |
-| `requirements.txt` | Python package dependencies. |
+Some generated files may not exist until `python experiment.py` is run.
 
 ## Installation
 
@@ -82,13 +82,13 @@ Create and activate a virtual environment:
 python -m venv .venv
 ```
 
-On Windows:
+Windows PowerShell:
 
-```bash
-.venv\Scripts\activate
+```powershell
+.venv\Scripts\Activate.ps1
 ```
 
-On macOS or Linux:
+macOS/Linux:
 
 ```bash
 source .venv/bin/activate
@@ -100,54 +100,29 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-## Required Dependencies
+## Running Experiments
 
-The project uses:
-
-- `numpy` for matrix operations, GF(2) arithmetic, random bit generation, and simulation logic
-- `matplotlib` for BER and capacity plots
-- `fpdf2` for automatic PDF report generation
-
-Dependencies are listed in [`requirements.txt`](requirements.txt).
-
-## Usage Examples
-
-Run the main Monte Carlo simulation:
+Run the main large-code Monte Carlo experiment:
 
 ```bash
 python experiment.py
 ```
 
-Generate the project report:
+The default simulation uses:
 
-```bash
-python generate_report.py
-```
+- target length `200`, resolved to `N = 204`
+- actual dimension `K = 104`
+- `300` frames per channel point
+- `50` BP/Min-Sum iterations
+- `15` Bit-Flip iterations
 
-The older small-code `(20,10)` demo scripts are preserved in `legacy/` for reference:
-
-```bash
-python legacy/simple_demo_20_10.py
-python legacy/experiments_20_10.py
-```
-
-## Running Simulations
-
-For the main Monte Carlo simulations:
-
-```bash
-python experiment.py
-```
-
-The main simulation script generates BER curves for BSC, AWGN, and BEC channels and saves output figures to the `results/figures/` directory. JSON simulation summaries are saved to `results/summaries/`.
-
-For a faster smoke test:
+Optional quick smoke run:
 
 ```bash
 EXPERIMENT_QUICK=1 EXPERIMENT_FRAMES=50 python experiment.py
 ```
 
-On Windows PowerShell:
+Windows PowerShell equivalent:
 
 ```powershell
 $env:EXPERIMENT_QUICK="1"
@@ -155,24 +130,49 @@ $env:EXPERIMENT_FRAMES="50"
 python experiment.py
 ```
 
-For smoother curves with more Monte Carlo frames:
+Run tests:
 
 ```bash
-EXPERIMENT_FRAMES=1000 python experiment.py
+pytest
 ```
 
-Optional environment variables:
+## Generated Outputs
 
-| Variable | Purpose |
-| --- | --- |
-| `EXPERIMENT_FRAMES` | Number of Monte Carlo frames per simulation point. |
-| `EXPERIMENT_MAX_ITER` | Maximum iterations for BP and Min-Sum decoders. |
-| `EXPERIMENT_MAX_ITER_BF` | Maximum iterations for the Bit-Flipping decoder. |
-| `EXPERIMENT_WORKERS` | Number of worker processes for parallel sweeps. |
-| `EXPERIMENT_QUICK` | Enables a reduced sweep for quick validation. |
-| `EXPERIMENT_CONSTRUCTION_SEED` | Seed used for LDPC construction. |
+The experiment writes figures to:
 
-## Generating the Report
+```text
+results/figures/
+```
+
+Expected figures:
+
+- `bsc_ber_fer.png`
+- `awgn_ber_fer.png`
+- `bec_ber_fer.png`
+- `decoder_convergence.png`
+- `coding_gain_summary.png`
+
+The experiment writes numeric CSV tables to:
+
+```text
+results/tables/
+```
+
+Expected tables:
+
+- `bsc_results.csv`
+- `awgn_results.csv`
+- `bec_results.csv`
+
+The experiment writes summary diagnostics to:
+
+```text
+results/summaries/experiment_summary.json
+```
+
+Each CSV row includes uncoded BER, decoder BER, decoder FER, convergence rate, average iterations, and coding gain in dB.
+
+## Report Generation
 
 Generate the PDF report:
 
@@ -180,68 +180,69 @@ Generate the PDF report:
 python generate_report.py
 ```
 
-The report is written to:
+The generated report is written to:
 
 ```text
 report.pdf
 ```
 
-The generated report summarizes the LDPC construction, encoding process, channel models, decoding algorithms, simulation results, and conclusions.
+The report focuses on the large `(204,104)` LDPC experiment and reads from:
 
-## Results
+- `results/figures/`
+- `results/tables/`
+- `results/summaries/experiment_summary.json`
 
-The following plots are generated in the `results/figures/` directory. They can be updated by rerunning the simulation scripts.
+If expected outputs are missing, rerun `python experiment.py` before generating the report.
 
-### BSC BER with Capacity Comparison
+## Validation Checks
 
-![BSC BER with Capacity](results/figures/ber_bsc_with_capacity.png)
-
-### AWGN BER with Shannon Limit
-
-![AWGN BER with Shannon Limit](results/figures/ber_awgn_with_shannon.png)
-
-### BEC BER with Capacity Comparison
-
-![BEC BER with Capacity](results/figures/ber_bec_with_capacity.png)
-
-### Channel Comparison
-
-![Channel Comparison](results/figures/channel_comparison.png)
-
-The numerical simulation summary is saved in:
+The experiment records validation warnings in:
 
 ```text
 results/summaries/experiment_summary.json
 ```
 
-## Technical Scope
+Warnings are not hidden. They may indicate:
 
-This implementation focuses on educational clarity and experimental reproducibility. It demonstrates the full LDPC workflow:
+- coded BER worse than uncoded BER at many channel points
+- BP worse than Min-Sum at most BSC/AWGN points
+- low convergence rate
+- exactly identical BP and Min-Sum behavior outside BEC
+- many detected 4-cycles in the parity-check matrix
 
-1. Construct a sparse parity-check matrix `H`.
-2. Convert `H` into a systematic generator matrix `G` over GF(2).
-3. Encode binary messages into valid LDPC codewords.
-4. Transmit codewords through noisy channels.
-5. Decode received words using iterative decoding algorithms.
-6. Estimate BER with Monte Carlo simulation.
-7. Compare empirical behavior with theoretical capacity limits.
+These checks are intended to make the results easier to audit, not to force the simulation to look favorable.
+
+## Known Limitations
+
+- The code length is finite: `(204,104)` is useful for coursework simulation but not a production LDPC length.
+- The default Monte Carlo budget is `300` frames per point, so curves may contain sampling noise.
+- The Gallager regular construction is not optimized for girth or degree-distribution performance.
+- Short cycles may exist and can reduce iterative-decoder performance.
+- Negative coding gain may occur at some operating points and is reported honestly.
+- The implementation is pure Python and prioritizes clarity over speed.
+- Results are coursework-level and should not be described as capacity-achieving.
 
 ## References
 
-1. R. G. Gallager, *Low-Density Parity-Check Codes*, MIT Press, 1963.
-2. D. J. C. MacKay, *Information Theory, Inference, and Learning Algorithms*, Cambridge University Press, 2003.
-3. T. Richardson and R. Urbanke, "Efficient Encoding of Low-Density Parity-Check Codes," *IEEE Transactions on Information Theory*, vol. 47, no. 2, 2001.
-4. T. Richardson and R. Urbanke, *Modern Coding Theory*, Cambridge University Press, 2008.
-5. C. E. Shannon, "A Mathematical Theory of Communication," *Bell System Technical Journal*, 1948.
+1. Gallager, R. G., *Low-Density Parity-Check Codes*, MIT Press, 1963.
+2. MacKay, D. J. C., *Information Theory, Inference, and Learning Algorithms*, Cambridge University Press, 2003.
+3. Richardson, T. and Urbanke, R., *Modern Coding Theory*, Cambridge University Press, 2008.
+4. Shannon, C. E., "A Mathematical Theory of Communication," *Bell System Technical Journal*, 1948.
+
+## Archived Educational Files
+
+The current main workflow is the large `(204,104)` simulation. Older small `(20,10)` educational scripts are preserved only for reference:
+
+```text
+legacy/experiments_20_10.py
+legacy/simple_demo_20_10.py
+```
+
+They are not part of the main experiment or report workflow.
 
 ## Author
 
 **Faisal Iqbal**  
 Course: Information Theory  
 Project: LDPC Codes Implementation  
-Language: Python  
-Topic: Low-Density Parity-Check Codes
-
-## Repository
-
-GitHub: [faisaliqbal946/LDPC-Codes-Implementation](https://github.com/faisaliqbal946/LDPC-Codes-Implementation)
+Language: Python
