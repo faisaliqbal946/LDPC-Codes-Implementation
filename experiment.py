@@ -28,9 +28,11 @@ Run:
 
 Outputs:
   results/figures/
-  ber_bsc_with_capacity.png
-  ber_awgn_with_shannon.png
-  ber_bec_with_capacity.png
+  bsc_ber_fer.png
+  awgn_ber_fer.png
+  bec_ber_fer.png
+  decoder_convergence.png
+  coding_gain_summary.png
   results/tables/
   bsc_results.csv
   awgn_results.csv
@@ -384,105 +386,227 @@ def run_bec(eps_list: np.ndarray) -> dict:
     return _merge_point_metrics(rows, decoders)
 
 
-def plot_bsc(res: dict, path: str) -> None:
+DECODER_STYLE = {
+    "Bit-Flip": {"color": "#7f7f7f", "marker": "o", "linestyle": "-"},
+    "BP": {"color": "#1f77b4", "marker": "s", "linestyle": "-"},
+    "Min-Sum": {"color": "#d62728", "marker": "^", "linestyle": "-"},
+}
+
+
+def _log_plot_values(values: np.ndarray, floor: float = 1e-8) -> np.ndarray:
+    return np.maximum(np.asarray(values, dtype=float), floor)
+
+
+def _uncoded_fer_from_ber(ber: np.ndarray, frame_len: int = N) -> np.ndarray:
+    ber = np.clip(np.asarray(ber, dtype=float), 0.0, 1.0)
+    return 1.0 - np.power(1.0 - ber, frame_len)
+
+
+def _style_axis(ax) -> None:
+    ax.grid(True, which="both", alpha=0.28, linewidth=0.7)
+    ax.tick_params(axis="both", labelsize=9)
+
+
+def _plot_decoder_metric(ax, x: np.ndarray, res: dict, metric: str, decoders: list[str]) -> None:
+    for decoder in decoders:
+        style = DECODER_STYLE[decoder]
+        ax.semilogy(
+            x,
+            _log_plot_values(res[decoder][metric]),
+            label=decoder,
+            color=style["color"],
+            marker=style["marker"],
+            linestyle=style["linestyle"],
+            linewidth=1.8,
+            markersize=4.5,
+        )
+
+
+def plot_bsc_ber_fer(res: dict, uncoded_ber: np.ndarray, path: str) -> None:
     cap = np.array([capacity_bsc(float(p)) for p in BSC_P])
-    fig, ax1 = plt.subplots(figsize=(7.5, 4.6))
-    ax1.semilogy(BSC_P, res["Bit-Flip"]["ber"], "-o", ms=4, label="Bit-Flip")
-    ax1.semilogy(BSC_P, res["BP"]["ber"], "-s", ms=4, label="BP")
-    ax1.semilogy(BSC_P, res["Min-Sum"]["ber"], "-^", ms=4, label="Min-Sum")
-    ax1.semilogy(BSC_P, BSC_P, "k--", lw=1.2, label="Uncoded (BER = p)")
-    ax1.set_xlabel("BSC crossover probability p")
-    ax1.set_ylabel("BER (log scale)")
-    ax1.set_title(f"({N},{K}) LDPC on BSC: BER vs p (frames={FRAMES_PER_POINT})")
-    ax1.grid(True, which="both", alpha=0.35)
-    ax1.legend(loc="upper left", fontsize=8)
-    min_ber = min(
-        float(np.min(res["Bit-Flip"]["ber"])),
-        float(np.min(res["BP"]["ber"])),
-        float(np.min(res["Min-Sum"]["ber"])),
-        float(np.min(BSC_P)),
-    )
-    ax1.set_ylim(bottom=max(1e-6, min_ber * 0.3))
+    uncoded_fer = _uncoded_fer_from_ber(uncoded_ber)
+    decoders = ["Bit-Flip", "BP", "Min-Sum"]
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.6), sharex=True)
+    fig.suptitle(f"({N},{K}) LDPC on BSC: BER/FER vs p", fontsize=13, fontweight="bold")
 
-    ax2 = ax1.twinx()
-    ax2.plot(BSC_P, cap, "k:", lw=1.6, label=r"$C(p)=1-H_2(p)$")
-    ax2.set_ylabel("Capacity (bits/use)", color="gray")
-    ax2.tick_params(axis="y", labelcolor="gray")
-    ax2.set_ylim(0, 1.02)
-    ax2.legend(loc="upper right", fontsize=8)
+    ax = axes[0]
+    _plot_decoder_metric(ax, BSC_P, res, "ber", decoders)
+    ax.semilogy(BSC_P, _log_plot_values(uncoded_ber), "k--", linewidth=1.7, label="Uncoded baseline")
+    ax.set_xlabel("BSC crossover probability p")
+    ax.set_ylabel("BER (log scale)")
+    ax.set_title("Bit error rate")
+    _style_axis(ax)
 
-    fig.tight_layout()
+    ax = axes[1]
+    _plot_decoder_metric(ax, BSC_P, res, "fer", decoders)
+    ax.semilogy(BSC_P, _log_plot_values(uncoded_fer), "k--", linewidth=1.7, label="Uncoded baseline")
+    ax.set_xlabel("BSC crossover probability p")
+    ax.set_ylabel("FER (log scale)")
+    ax.set_title("Frame error rate")
+    _style_axis(ax)
+
+    ax_ref = axes[1].twinx()
+    ax_ref.plot(BSC_P, cap, color="#555555", linestyle=":", linewidth=1.4, label="Theoretical capacity")
+    ax_ref.set_ylabel("Capacity reference (bits/use)", color="#555555")
+    ax_ref.tick_params(axis="y", labelcolor="#555555", labelsize=9)
+    ax_ref.set_ylim(0.0, 1.02)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    h2, l2 = ax_ref.get_legend_handles_labels()
+    fig.legend(handles + h2, labels + l2, loc="lower center", ncol=5, fontsize=8, frameon=False)
+    fig.tight_layout(rect=[0, 0.08, 1, 0.94])
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_awgn(res: dict, unc_emp: np.ndarray, path: str) -> None:
+def plot_awgn_ber_fer(res: dict, unc_emp: np.ndarray, path: str) -> None:
     unc_an = _ber_uncoded_awgn_bpsk_db(AWGN_EBNO_DB)
     shannon_model_db = float(shannon_limit_awgn_rate(RATE))
+    uncoded_fer = _uncoded_fer_from_ber(unc_emp)
+    decoders = ["BP", "Min-Sum"]
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.6), sharex=True)
+    fig.suptitle(f"({N},{K}) LDPC on AWGN: BER/FER vs Eb/N0", fontsize=13, fontweight="bold")
 
-    fig, ax1 = plt.subplots(figsize=(7.5, 4.6))
-    lu = ax1.semilogy(AWGN_EBNO_DB, unc_emp, "k-", lw=1.4)[0]
-    lu2 = ax1.semilogy(AWGN_EBNO_DB, unc_an, "k:", lw=1.0)[0]
-    lbp = ax1.semilogy(AWGN_EBNO_DB, res["BP"]["ber"], "-s", ms=4)[0]
-    lms = ax1.semilogy(AWGN_EBNO_DB, res["Min-Sum"]["ber"], "-^", ms=4)[0]
-    ax1.axvline(SHANNON_REF_DB, color="gray", ls="--", lw=1.4)
-    ax1.axvline(shannon_model_db, color="purple", ls=":", lw=1.4)
-    ax1.set_xlabel(r"$E_b/N_0$ (dB)")
-    ax1.set_ylabel("BER (log scale)")
-    ax1.set_title(f"({N},{K}) LDPC on AWGN, R={RATE:.4f} (frames={FRAMES_PER_POINT})")
-    ax1.grid(True, which="both", alpha=0.35)
-    lo = min(
-        float(np.min(res["BP"]["ber"])),
-        float(np.min(res["Min-Sum"]["ber"])),
-        float(np.min(unc_emp)),
-        float(np.min(unc_an)),
-    )
-    ax1.set_ylim(bottom=max(1e-7, lo * 0.2))
+    ax = axes[0]
+    _plot_decoder_metric(ax, AWGN_EBNO_DB, res, "ber", decoders)
+    ax.semilogy(AWGN_EBNO_DB, _log_plot_values(unc_emp), "k--", linewidth=1.7, label="Uncoded baseline")
+    ax.semilogy(AWGN_EBNO_DB, _log_plot_values(unc_an), color="#555555", linestyle=":", linewidth=1.2, label="Uncoded analytic")
+    ax.set_xlabel("Eb/N0 (dB)")
+    ax.set_ylabel("BER (log scale)")
+    ax.set_title("Bit error rate")
+    _style_axis(ax)
+
+    ax = axes[1]
+    _plot_decoder_metric(ax, AWGN_EBNO_DB, res, "fer", decoders)
+    ax.semilogy(AWGN_EBNO_DB, _log_plot_values(uncoded_fer), "k--", linewidth=1.7, label="Uncoded baseline")
+    ax.set_xlabel("Eb/N0 (dB)")
+    ax.set_ylabel("FER (log scale)")
+    ax.set_title("Frame error rate")
+    _style_axis(ax)
+
+    for ax in axes:
+        ax.axvline(SHANNON_REF_DB, color="#777777", linestyle="--", linewidth=1.2)
+        ax.axvline(shannon_model_db, color="#9467bd", linestyle=":", linewidth=1.3)
     h_extra = [
-        Line2D([0], [0], color="gray", ls="--", lw=1.4),
-        Line2D([0], [0], color="purple", ls=":", lw=1.4),
+        Line2D([0], [0], color="#777777", linestyle="--", linewidth=1.2),
+        Line2D([0], [0], color="#9467bd", linestyle=":", linewidth=1.3),
     ]
-    ax1.legend(
-        [lu, lu2, lbp, lms] + h_extra,
-        [
-            "Uncoded BPSK (simulated, rate=1)",
-            "Uncoded BPSK (analytic)",
-            "BP",
-            "Min-Sum",
-            f"Ref. limit ({SHANNON_REF_DB} dB)",
-            f"Shannon @ R={RATE:.3f} ({shannon_model_db:.2f} dB)",
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles + h_extra,
+        labels + [
+            f"Theoretical ref. ({SHANNON_REF_DB} dB)",
+            f"Shannon ref. at R={RATE:.3f} ({shannon_model_db:.2f} dB)",
         ],
-        loc="upper right",
-        fontsize=7,
+        loc="lower center",
+        ncol=4,
+        fontsize=8,
+        frameon=False,
     )
-
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0.1, 1, 0.94])
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_bec(res: dict, path: str) -> None:
+def plot_bec_ber_fer(res: dict, uncoded_ber: np.ndarray, path: str) -> None:
     cap = capacity_bec(BEC_EPS)
-    fig, ax1 = plt.subplots(figsize=(7.5, 4.6))
-    ax1.semilogy(BEC_EPS, res["BP"]["ber"], "-s", ms=4, label="BP")
-    ax1.semilogy(BEC_EPS, res["Min-Sum"]["ber"], "--^", ms=4, label="Min-Sum")
-    ax1.semilogy(BEC_EPS, BEC_EPS, "k--", lw=1.2, label="Uncoded (BER = epsilon)")
-    ax1.set_xlabel(r"BEC erasure probability $\epsilon$")
-    ax1.set_ylabel("BER (log scale)")
-    ax1.set_title(f"({N},{K}) LDPC on BEC (frames={FRAMES_PER_POINT})")
-    ax1.grid(True, which="both", alpha=0.35)
-    ax1.legend(loc="upper left", fontsize=8)
-    lo = min(float(np.min(res["BP"]["ber"])), float(np.min(res["Min-Sum"]["ber"])))
-    ax1.set_ylim(bottom=max(1e-6, lo * 0.2))
+    uncoded_fer = _uncoded_fer_from_ber(uncoded_ber)
+    decoders = ["BP", "Min-Sum"]
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.6), sharex=True)
+    fig.suptitle(f"({N},{K}) LDPC on BEC: BER/FER vs erasure probability", fontsize=13, fontweight="bold")
 
-    ax2 = ax1.twinx()
-    ax2.plot(BEC_EPS, cap, "k:", lw=1.6, label=r"$C=1-\epsilon$")
-    ax2.set_ylabel("Capacity (bits/use)", color="gray")
-    ax2.tick_params(axis="y", labelcolor="gray")
-    ax2.set_ylim(0, 1.02)
-    ax2.legend(loc="upper right", fontsize=8)
+    ax = axes[0]
+    _plot_decoder_metric(ax, BEC_EPS, res, "ber", decoders)
+    ax.semilogy(BEC_EPS, _log_plot_values(uncoded_ber), "k--", linewidth=1.7, label="Uncoded baseline")
+    ax.set_xlabel("BEC erasure probability")
+    ax.set_ylabel("BER (log scale)")
+    ax.set_title("Bit error rate")
+    _style_axis(ax)
 
-    fig.tight_layout()
+    ax = axes[1]
+    _plot_decoder_metric(ax, BEC_EPS, res, "fer", decoders)
+    ax.semilogy(BEC_EPS, _log_plot_values(uncoded_fer), "k--", linewidth=1.7, label="Uncoded baseline")
+    ax.set_xlabel("BEC erasure probability")
+    ax.set_ylabel("FER (log scale)")
+    ax.set_title("Frame error rate")
+    _style_axis(ax)
+
+    ax_ref = axes[1].twinx()
+    ax_ref.plot(BEC_EPS, cap, color="#555555", linestyle=":", linewidth=1.4, label="Theoretical capacity")
+    ax_ref.set_ylabel("Capacity reference (bits/use)", color="#555555")
+    ax_ref.tick_params(axis="y", labelcolor="#555555", labelsize=9)
+    ax_ref.set_ylim(0.0, 1.02)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    h2, l2 = ax_ref.get_legend_handles_labels()
+    fig.legend(handles + h2, labels + l2, loc="lower center", ncol=4, fontsize=8, frameon=False)
+    fig.tight_layout(rect=[0, 0.08, 1, 0.94])
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_decoder_convergence(res_bsc: dict, res_awgn: dict, res_bec: dict, path: str) -> None:
+    configs = [
+        ("BSC", BSC_P, "p", res_bsc, ["Bit-Flip", "BP", "Min-Sum"]),
+        ("AWGN", AWGN_EBNO_DB, "Eb/N0 (dB)", res_awgn, ["BP", "Min-Sum"]),
+        ("BEC", BEC_EPS, "erasure probability", res_bec, ["BP", "Min-Sum"]),
+    ]
+    fig, axes = plt.subplots(2, 3, figsize=(13.2, 7.0))
+    fig.suptitle(f"({N},{K}) LDPC decoder convergence and iteration cost", fontsize=13, fontweight="bold")
+
+    for col, (name, x, xlabel, res, decoders) in enumerate(configs):
+        ax = axes[0, col]
+        for decoder in decoders:
+            style = DECODER_STYLE[decoder]
+            ax.plot(x, res[decoder]["convergence_rate"], label=decoder, color=style["color"], marker=style["marker"], linewidth=1.8, markersize=4.5)
+        ax.set_title(name)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Convergence rate")
+        ax.set_ylim(-0.04, 1.04)
+        _style_axis(ax)
+
+        ax = axes[1, col]
+        for decoder in decoders:
+            style = DECODER_STYLE[decoder]
+            ax.plot(x, res[decoder]["avg_iterations"], label=decoder, color=style["color"], marker=style["marker"], linewidth=1.8, markersize=4.5)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Average iterations")
+        _style_axis(ax)
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=8, frameon=False)
+    fig.tight_layout(rect=[0, 0.06, 1, 0.94])
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _coding_gain_series(uncoded_ber: np.ndarray, coded_ber: np.ndarray) -> np.ndarray:
+    return np.array([_coding_gain_db(float(u), float(c)) for u, c in zip(uncoded_ber, coded_ber)], dtype=float)
+
+
+def plot_coding_gain_summary(res_bsc: dict, res_awgn: dict, res_bec: dict, unc_awgn_emp: np.ndarray, path: str) -> None:
+    configs = [
+        ("BSC", BSC_P, "p", BSC_P.astype(float), res_bsc, ["Bit-Flip", "BP", "Min-Sum"]),
+        ("AWGN", AWGN_EBNO_DB, "Eb/N0 (dB)", unc_awgn_emp, res_awgn, ["BP", "Min-Sum"]),
+        ("BEC", BEC_EPS, "erasure probability", BEC_EPS.astype(float), res_bec, ["BP", "Min-Sum"]),
+    ]
+    fig, axes = plt.subplots(1, 3, figsize=(13.2, 4.2))
+    fig.suptitle("Coding gain summary: 10 log10(uncoded BER / decoder BER)", fontsize=13, fontweight="bold")
+
+    for ax, (name, x, xlabel, uncoded, res, decoders) in zip(axes, configs):
+        for decoder in decoders:
+            style = DECODER_STYLE[decoder]
+            gain = _coding_gain_series(uncoded, res[decoder]["ber"])
+            ax.plot(x, gain, label=decoder, color=style["color"], marker=style["marker"], linewidth=1.8, markersize=4.5)
+        ax.axhline(0.0, color="black", linestyle="--", linewidth=1.0, label="No gain")
+        ax.set_title(name)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Coding gain (dB)")
+        _style_axis(ax)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=8, frameon=False)
+    fig.tight_layout(rect=[0, 0.08, 1, 0.9])
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -610,23 +734,29 @@ def main() -> int:
     res_bec = run_bec(BEC_EPS)
     _phase_done("BEC", t0, 4)
 
-    p_bsc = os.path.join(FIGURES_DIR, "ber_bsc_with_capacity.png")
-    p_awgn = os.path.join(FIGURES_DIR, "ber_awgn_with_shannon.png")
-    p_bec = os.path.join(FIGURES_DIR, "ber_bec_with_capacity.png")
+    unc_bsc = BSC_P.astype(float)
+    unc_bec = BEC_EPS.astype(float)
+    figure_files = {
+        "bsc_ber_fer": os.path.join(FIGURES_DIR, "bsc_ber_fer.png"),
+        "awgn_ber_fer": os.path.join(FIGURES_DIR, "awgn_ber_fer.png"),
+        "bec_ber_fer": os.path.join(FIGURES_DIR, "bec_ber_fer.png"),
+        "decoder_convergence": os.path.join(FIGURES_DIR, "decoder_convergence.png"),
+        "coding_gain_summary": os.path.join(FIGURES_DIR, "coding_gain_summary.png"),
+    }
     t0 = time.perf_counter()
-    plot_bsc(res_bsc, p_bsc)
-    plot_awgn(res_awgn, unc_awgn_emp, p_awgn)
-    plot_bec(res_bec, p_bec)
+    plot_bsc_ber_fer(res_bsc, unc_bsc, figure_files["bsc_ber_fer"])
+    plot_awgn_ber_fer(res_awgn, unc_awgn_emp, figure_files["awgn_ber_fer"])
+    plot_bec_ber_fer(res_bec, unc_bec, figure_files["bec_ber_fer"])
+    plot_decoder_convergence(res_bsc, res_awgn, res_bec, figure_files["decoder_convergence"])
+    plot_coding_gain_summary(res_bsc, res_awgn, res_bec, unc_awgn_emp, figure_files["coding_gain_summary"])
     print(
         f"  Plots saved in {time.perf_counter() - t0:.1f}s  (total run {time.perf_counter() - t_run0:.1f}s)",
         flush=True,
     )
-    print("Saved:", p_bsc, p_awgn, p_bec, sep="\n  ")
+    print("Saved:", *figure_files.values(), sep="\n  ")
 
     issues = validate(res_bsc, res_awgn, res_bec, unc_awgn_emp)
     unc_awgn = _ber_uncoded_awgn_bpsk_db(AWGN_EBNO_DB)
-    unc_bsc = BSC_P.astype(float)
-    unc_bec = BEC_EPS.astype(float)
 
     bsc_csv = os.path.join(TABLES_DIR, "bsc_results.csv")
     awgn_csv = os.path.join(TABLES_DIR, "awgn_results.csv")
@@ -650,6 +780,7 @@ def main() -> int:
             "awgn": awgn_csv,
             "bec": bec_csv,
         },
+        "figure_files": figure_files,
         "bsc_p": BSC_P.tolist(),
         "bsc_uncoded_ber": unc_bsc.tolist(),
         "bsc_metrics": _compact_metrics(res_bsc),
