@@ -1,1 +1,7 @@
-"__pycache__/*.pyc.vscode/.idea/.DS_Store" 
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mplconfig/
+.vscode/
+.idea/
+.DS_Store

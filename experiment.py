@@ -51,6 +51,8 @@ import sys
 import time
 from math import erfc
 
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(os.getcwd(), ".mplconfig"))
+
 import numpy as np
 import matplotlib
 
