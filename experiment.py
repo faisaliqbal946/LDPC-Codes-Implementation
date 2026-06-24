@@ -31,6 +31,10 @@ Outputs:
   ber_bsc_with_capacity.png
   ber_awgn_with_shannon.png
   ber_bec_with_capacity.png
+  results/tables/
+  bsc_results.csv
+  awgn_results.csv
+  bec_results.csv
   results/summaries/
   experiment_summary.json
 """
@@ -40,6 +44,7 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import os
+import csv
 import sys
 import time
 from math import erfc
@@ -111,6 +116,55 @@ H, G, col_order, K, M, RATE, N = build_ldpc_for_target_length(
 )
 
 
+def _empty_counts(decoders: list[str]) -> dict:
+    return {
+        decoder: {"bit_errors": 0, "frame_errors": 0, "converged": 0, "iterations": 0, "frames": 0, "bits": 0}
+        for decoder in decoders
+    }
+
+
+def _record_decode(counts: dict, decoder: str, decoded: np.ndarray, converged: bool, iters: int, codeword: np.ndarray) -> None:
+    bit_errors = int(np.sum(decoded != codeword))
+    counts[decoder]["bit_errors"] += bit_errors
+    counts[decoder]["frame_errors"] += int(bit_errors > 0)
+    counts[decoder]["converged"] += int(bool(converged))
+    counts[decoder]["iterations"] += int(iters)
+    counts[decoder]["frames"] += 1
+    counts[decoder]["bits"] += int(len(codeword))
+
+
+def _counts_to_metrics(counts: dict) -> dict:
+    metrics = {}
+    for decoder, c in counts.items():
+        frames = max(int(c["frames"]), 1)
+        bits = max(int(c["bits"]), 1)
+        metrics[decoder] = {
+            "ber": float(c["bit_errors"] / bits),
+            "fer": float(c["frame_errors"] / frames),
+            "convergence_rate": float(c["converged"] / frames),
+            "avg_iterations": float(c["iterations"] / frames),
+        }
+    return metrics
+
+
+def _merge_point_metrics(rows: list[dict], decoders: list[str]) -> dict:
+    return {
+        decoder: {
+            metric: np.array([row[decoder][metric] for row in rows], dtype=float)
+            for metric in ("ber", "fer", "convergence_rate", "avg_iterations")
+        }
+        for decoder in decoders
+    }
+
+
+def _coding_gain_db(uncoded_ber: float, coded_ber: float) -> float:
+    if coded_ber <= 0:
+        return float("inf")
+    if uncoded_ber <= 0:
+        return float("-inf")
+    return float(10.0 * np.log10(float(uncoded_ber) / float(coded_ber)))
+
+
 def _pool_workers() -> int:
     raw = os.environ.get("EXPERIMENT_WORKERS", "").strip()
     if raw:
@@ -132,20 +186,19 @@ def _bsc_point_task(args):
         minsum_decode,
     )
 
-    e_bf = e_bp = e_ms = bits = 0
+    counts = _empty_counts(["Bit-Flip", "BP", "Min-Sum"])
     for _ in range(frames):
         msg = rng.integers(0, 2, size=K)
         cw = encode(G, msg, col_order)
         rx, _ = bsc(cw, float(p), seed=rng.integers(0, 2**31))
         llr = bsc_llr(rx, float(p))
-        d_bf, _, _ = bit_flip_decode(H, rx, max_iter=max_iter_bf)
-        d_bp, _, _ = belief_propagation_decode(H, llr, max_iter=max_iter_bp)
-        d_ms, _, _ = minsum_decode(H, llr, max_iter=max_iter_bp)
-        e_bf += int(np.sum(d_bf != cw))
-        e_bp += int(np.sum(d_bp != cw))
-        e_ms += int(np.sum(d_ms != cw))
-        bits += N
-    return e_bf / bits, e_bp / bits, e_ms / bits
+        d_bf, c_bf, i_bf = bit_flip_decode(H, rx, max_iter=max_iter_bf)
+        d_bp, c_bp, i_bp = belief_propagation_decode(H, llr, max_iter=max_iter_bp)
+        d_ms, c_ms, i_ms = minsum_decode(H, llr, max_iter=max_iter_bp)
+        _record_decode(counts, "Bit-Flip", d_bf, c_bf, i_bf, cw)
+        _record_decode(counts, "BP", d_bp, c_bp, i_bp, cw)
+        _record_decode(counts, "Min-Sum", d_ms, c_ms, i_ms, cw)
+    return _counts_to_metrics(counts)
 
 
 def _awgn_point_task(args):
@@ -153,37 +206,35 @@ def _awgn_point_task(args):
     rng = np.random.default_rng(base_seed)
     from ldpc import encode, awgn_channel, awgn_llr, belief_propagation_decode, minsum_decode
 
-    e_bp = e_ms = bits = 0
+    counts = _empty_counts(["BP", "Min-Sum"])
     for _ in range(frames):
         msg = rng.integers(0, 2, size=K)
         cw = encode(G, msg, col_order)
         rx, sigma2 = awgn_channel(cw, float(snr_db), rate=rate, seed=rng.integers(0, 2**31))
         llr = awgn_llr(rx, sigma2)
-        d_bp, _, _ = belief_propagation_decode(H, llr, max_iter=max_iter_bp)
-        d_ms, _, _ = minsum_decode(H, llr, max_iter=max_iter_bp)
-        e_bp += int(np.sum(d_bp != cw))
-        e_ms += int(np.sum(d_ms != cw))
-        bits += N
-    return e_bp / bits, e_ms / bits
+        d_bp, c_bp, i_bp = belief_propagation_decode(H, llr, max_iter=max_iter_bp)
+        d_ms, c_ms, i_ms = minsum_decode(H, llr, max_iter=max_iter_bp)
+        _record_decode(counts, "BP", d_bp, c_bp, i_bp, cw)
+        _record_decode(counts, "Min-Sum", d_ms, c_ms, i_ms, cw)
+    return _counts_to_metrics(counts)
 
 
 def _bec_point_task(args):
     H, G, col_order, K, N, eps, frames, base_seed, max_iter_bp = args
     rng = np.random.default_rng(base_seed)
-    from ldpc import encode, bec_channel, bec_llr, belief_propagation_decode
+    from ldpc import encode, bec_channel, bec_llr, belief_propagation_decode, minsum_decode
 
-    e_bp = bits = 0
+    counts = _empty_counts(["BP", "Min-Sum"])
     for _ in range(frames):
         msg = rng.integers(0, 2, size=K)
         cw = encode(G, msg, col_order)
         rx = bec_channel(cw, float(eps), seed=rng.integers(0, 2**31))
         llr = bec_llr(rx)
-        d_bp, _, _ = belief_propagation_decode(H, llr, max_iter=max_iter_bp)
-        e_bp += int(np.sum(d_bp != cw))
-        bits += N
-    ber = e_bp / bits
-    # On BEC, Min-Sum matches BP; report one BER for both (prompt: identical curves).
-    return ber, ber
+        d_bp, c_bp, i_bp = belief_propagation_decode(H, llr, max_iter=max_iter_bp)
+        d_ms, c_ms, i_ms = minsum_decode(H, llr, max_iter=max_iter_bp)
+        _record_decode(counts, "BP", d_bp, c_bp, i_bp, cw)
+        _record_decode(counts, "Min-Sum", d_ms, c_ms, i_ms, cw)
+    return _counts_to_metrics(counts)
 
 
 def _ber_uncoded_awgn_bpsk_db(snr_db: np.ndarray) -> np.ndarray:
@@ -210,27 +261,25 @@ def run_awgn_uncoded_empirical(snr_db_list: np.ndarray) -> np.ndarray:
 
 
 def run_bsc(flip_probs: np.ndarray) -> dict:
+    decoders = ["Bit-Flip", "BP", "Min-Sum"]
     w = _pool_workers()
     if w == 1:
-        out = {"Bit-Flip": [], "BP": [], "Min-Sum": []}
+        rows = []
         for p in flip_probs:
-            errs = {k: 0 for k in out}
-            bits = 0
+            counts = _empty_counts(decoders)
             for _ in range(FRAMES_PER_POINT):
                 msg = RNG.integers(0, 2, size=K)
                 cw = encode(G, msg, col_order)
                 rx, _ = bsc(cw, float(p), seed=RNG.integers(0, 2**31))
                 llr = bsc_llr(rx, float(p))
-                d_bf, _, _ = bit_flip_decode(H, rx, max_iter=MAX_ITER_BF)
-                d_bp, _, _ = belief_propagation_decode(H, llr, max_iter=MAX_ITER_BP_MS)
-                d_ms, _, _ = minsum_decode(H, llr, max_iter=MAX_ITER_BP_MS)
-                errs["Bit-Flip"] += int(np.sum(d_bf != cw))
-                errs["BP"] += int(np.sum(d_bp != cw))
-                errs["Min-Sum"] += int(np.sum(d_ms != cw))
-                bits += N
-            for k in out:
-                out[k].append(errs[k] / bits)
-        return {k: np.array(v, dtype=float) for k, v in out.items()}
+                d_bf, c_bf, i_bf = bit_flip_decode(H, rx, max_iter=MAX_ITER_BF)
+                d_bp, c_bp, i_bp = belief_propagation_decode(H, llr, max_iter=MAX_ITER_BP_MS)
+                d_ms, c_ms, i_ms = minsum_decode(H, llr, max_iter=MAX_ITER_BP_MS)
+                _record_decode(counts, "Bit-Flip", d_bf, c_bf, i_bf, cw)
+                _record_decode(counts, "BP", d_bp, c_bp, i_bp, cw)
+                _record_decode(counts, "Min-Sum", d_ms, c_ms, i_ms, cw)
+            rows.append(_counts_to_metrics(counts))
+        return _merge_point_metrics(rows, decoders)
 
     args = []
     for i, p in enumerate(flip_probs):
@@ -251,34 +300,27 @@ def run_bsc(flip_probs: np.ndarray) -> dict:
         )
     with mp.Pool(w) as pool:
         rows = pool.map(_bsc_point_task, args)
-    bf, bp, ms = zip(*rows)
-    return {
-        "Bit-Flip": np.array(bf, dtype=float),
-        "BP": np.array(bp, dtype=float),
-        "Min-Sum": np.array(ms, dtype=float),
-    }
+    return _merge_point_metrics(rows, decoders)
 
 
 def run_awgn(snr_db_list: np.ndarray) -> dict:
+    decoders = ["BP", "Min-Sum"]
     w = _pool_workers()
     if w == 1:
-        out = {"BP": [], "Min-Sum": []}
+        rows = []
         for snr_db in snr_db_list:
-            errs = {"BP": 0, "Min-Sum": 0}
-            bits = 0
+            counts = _empty_counts(decoders)
             for _ in range(FRAMES_PER_POINT):
                 msg = RNG.integers(0, 2, size=K)
                 cw = encode(G, msg, col_order)
                 rx, sigma2 = awgn_channel(cw, float(snr_db), rate=RATE, seed=RNG.integers(0, 2**31))
                 llr = awgn_llr(rx, sigma2)
-                d_bp, _, _ = belief_propagation_decode(H, llr, max_iter=MAX_ITER_BP_MS)
-                d_ms, _, _ = minsum_decode(H, llr, max_iter=MAX_ITER_BP_MS)
-                errs["BP"] += int(np.sum(d_bp != cw))
-                errs["Min-Sum"] += int(np.sum(d_ms != cw))
-                bits += N
-            out["BP"].append(errs["BP"] / bits)
-            out["Min-Sum"].append(errs["Min-Sum"] / bits)
-        return {k: np.array(v, dtype=float) for k, v in out.items()}
+                d_bp, c_bp, i_bp = belief_propagation_decode(H, llr, max_iter=MAX_ITER_BP_MS)
+                d_ms, c_ms, i_ms = minsum_decode(H, llr, max_iter=MAX_ITER_BP_MS)
+                _record_decode(counts, "BP", d_bp, c_bp, i_bp, cw)
+                _record_decode(counts, "Min-Sum", d_ms, c_ms, i_ms, cw)
+            rows.append(_counts_to_metrics(counts))
+        return _merge_point_metrics(rows, decoders)
 
     args = []
     for i, snr_db in enumerate(snr_db_list):
@@ -299,28 +341,27 @@ def run_awgn(snr_db_list: np.ndarray) -> dict:
         )
     with mp.Pool(w) as pool:
         rows = pool.map(_awgn_point_task, args)
-    bp, ms = zip(*rows)
-    return {"BP": np.array(bp, dtype=float), "Min-Sum": np.array(ms, dtype=float)}
+    return _merge_point_metrics(rows, decoders)
 
 
 def run_bec(eps_list: np.ndarray) -> dict:
+    decoders = ["BP", "Min-Sum"]
     w = _pool_workers()
     if w == 1:
-        out = {"BP": [], "Min-Sum": []}
+        rows = []
         for eps in eps_list:
-            errs_bp = bits = 0
+            counts = _empty_counts(decoders)
             for _ in range(FRAMES_PER_POINT):
                 msg = RNG.integers(0, 2, size=K)
                 cw = encode(G, msg, col_order)
                 rx = bec_channel(cw, float(eps), seed=RNG.integers(0, 2**31))
                 llr = bec_llr(rx)
-                d_bp, _, _ = belief_propagation_decode(H, llr, max_iter=MAX_ITER_BP_MS)
-                errs_bp += int(np.sum(d_bp != cw))
-                bits += N
-            ber = errs_bp / bits
-            out["BP"].append(ber)
-            out["Min-Sum"].append(ber)
-        return {k: np.array(v, dtype=float) for k, v in out.items()}
+                d_bp, c_bp, i_bp = belief_propagation_decode(H, llr, max_iter=MAX_ITER_BP_MS)
+                d_ms, c_ms, i_ms = minsum_decode(H, llr, max_iter=MAX_ITER_BP_MS)
+                _record_decode(counts, "BP", d_bp, c_bp, i_bp, cw)
+                _record_decode(counts, "Min-Sum", d_ms, c_ms, i_ms, cw)
+            rows.append(_counts_to_metrics(counts))
+        return _merge_point_metrics(rows, decoders)
 
     args = []
     for i, eps in enumerate(eps_list):
@@ -340,16 +381,15 @@ def run_bec(eps_list: np.ndarray) -> dict:
         )
     with mp.Pool(w) as pool:
         rows = pool.map(_bec_point_task, args)
-    bp, ms = zip(*rows)
-    return {"BP": np.array(bp, dtype=float), "Min-Sum": np.array(ms, dtype=float)}
+    return _merge_point_metrics(rows, decoders)
 
 
 def plot_bsc(res: dict, path: str) -> None:
     cap = np.array([capacity_bsc(float(p)) for p in BSC_P])
     fig, ax1 = plt.subplots(figsize=(7.5, 4.6))
-    ax1.semilogy(BSC_P, res["Bit-Flip"], "-o", ms=4, label="Bit-Flip")
-    ax1.semilogy(BSC_P, res["BP"], "-s", ms=4, label="BP")
-    ax1.semilogy(BSC_P, res["Min-Sum"], "-^", ms=4, label="Min-Sum")
+    ax1.semilogy(BSC_P, res["Bit-Flip"]["ber"], "-o", ms=4, label="Bit-Flip")
+    ax1.semilogy(BSC_P, res["BP"]["ber"], "-s", ms=4, label="BP")
+    ax1.semilogy(BSC_P, res["Min-Sum"]["ber"], "-^", ms=4, label="Min-Sum")
     ax1.semilogy(BSC_P, BSC_P, "k--", lw=1.2, label="Uncoded (BER = p)")
     ax1.set_xlabel("BSC crossover probability p")
     ax1.set_ylabel("BER (log scale)")
@@ -357,9 +397,9 @@ def plot_bsc(res: dict, path: str) -> None:
     ax1.grid(True, which="both", alpha=0.35)
     ax1.legend(loc="upper left", fontsize=8)
     min_ber = min(
-        float(np.min(res["Bit-Flip"])),
-        float(np.min(res["BP"])),
-        float(np.min(res["Min-Sum"])),
+        float(np.min(res["Bit-Flip"]["ber"])),
+        float(np.min(res["BP"]["ber"])),
+        float(np.min(res["Min-Sum"]["ber"])),
         float(np.min(BSC_P)),
     )
     ax1.set_ylim(bottom=max(1e-6, min_ber * 0.3))
@@ -383,8 +423,8 @@ def plot_awgn(res: dict, unc_emp: np.ndarray, path: str) -> None:
     fig, ax1 = plt.subplots(figsize=(7.5, 4.6))
     lu = ax1.semilogy(AWGN_EBNO_DB, unc_emp, "k-", lw=1.4)[0]
     lu2 = ax1.semilogy(AWGN_EBNO_DB, unc_an, "k:", lw=1.0)[0]
-    lbp = ax1.semilogy(AWGN_EBNO_DB, res["BP"], "-s", ms=4)[0]
-    lms = ax1.semilogy(AWGN_EBNO_DB, res["Min-Sum"], "-^", ms=4)[0]
+    lbp = ax1.semilogy(AWGN_EBNO_DB, res["BP"]["ber"], "-s", ms=4)[0]
+    lms = ax1.semilogy(AWGN_EBNO_DB, res["Min-Sum"]["ber"], "-^", ms=4)[0]
     ax1.axvline(SHANNON_REF_DB, color="gray", ls="--", lw=1.4)
     ax1.axvline(shannon_model_db, color="purple", ls=":", lw=1.4)
     ax1.set_xlabel(r"$E_b/N_0$ (dB)")
@@ -392,8 +432,8 @@ def plot_awgn(res: dict, unc_emp: np.ndarray, path: str) -> None:
     ax1.set_title(f"({N},{K}) LDPC on AWGN, R={RATE:.4f} (frames={FRAMES_PER_POINT})")
     ax1.grid(True, which="both", alpha=0.35)
     lo = min(
-        float(np.min(res["BP"])),
-        float(np.min(res["Min-Sum"])),
+        float(np.min(res["BP"]["ber"])),
+        float(np.min(res["Min-Sum"]["ber"])),
         float(np.min(unc_emp)),
         float(np.min(unc_an)),
     )
@@ -424,15 +464,15 @@ def plot_awgn(res: dict, unc_emp: np.ndarray, path: str) -> None:
 def plot_bec(res: dict, path: str) -> None:
     cap = capacity_bec(BEC_EPS)
     fig, ax1 = plt.subplots(figsize=(7.5, 4.6))
-    ax1.semilogy(BEC_EPS, res["BP"], "-s", ms=4, label="BP")
-    ax1.semilogy(BEC_EPS, res["Min-Sum"], "--^", ms=4, label="Min-Sum")
-    ax1.semilogy(BEC_EPS, BEC_EPS, "k--", lw=1.2, label="Uncoded (BER = ε)")
+    ax1.semilogy(BEC_EPS, res["BP"]["ber"], "-s", ms=4, label="BP")
+    ax1.semilogy(BEC_EPS, res["Min-Sum"]["ber"], "--^", ms=4, label="Min-Sum")
+    ax1.semilogy(BEC_EPS, BEC_EPS, "k--", lw=1.2, label="Uncoded (BER = epsilon)")
     ax1.set_xlabel(r"BEC erasure probability $\epsilon$")
     ax1.set_ylabel("BER (log scale)")
     ax1.set_title(f"({N},{K}) LDPC on BEC (frames={FRAMES_PER_POINT})")
     ax1.grid(True, which="both", alpha=0.35)
     ax1.legend(loc="upper left", fontsize=8)
-    lo = min(float(np.min(res["BP"])), float(np.min(res["Min-Sum"])))
+    lo = min(float(np.min(res["BP"]["ber"])), float(np.min(res["Min-Sum"]["ber"])))
     ax1.set_ylim(bottom=max(1e-6, lo * 0.2))
 
     ax2 = ax1.twinx()
@@ -450,21 +490,78 @@ def plot_bec(res: dict, path: str) -> None:
 def validate(res_bsc: dict, res_awgn: dict, res_bec: dict, unc_awgn_emp: np.ndarray) -> list[str]:
     issues: list[str] = []
     # Compare to simulated uncoded (same Monte Carlo budget, same Eb/N0 definition).
-    if not np.any(res_awgn["BP"] < unc_awgn_emp):
-        bad = np.where(res_awgn["BP"] >= unc_awgn_emp)[0]
+    if not np.any(res_awgn["BP"]["ber"] < unc_awgn_emp):
+        bad = np.where(res_awgn["BP"]["ber"] >= unc_awgn_emp)[0]
         issues.append(f"AWGN: BP BER not strictly below uncoded (sim.) at indices {bad.tolist()} (Eb/N0={AWGN_EBNO_DB[bad]})")
-    if not np.any(res_awgn["Min-Sum"] < unc_awgn_emp):
-        bad = np.where(res_awgn["Min-Sum"] >= unc_awgn_emp)[0]
+    if not np.any(res_awgn["Min-Sum"]["ber"] < unc_awgn_emp):
+        bad = np.where(res_awgn["Min-Sum"]["ber"] >= unc_awgn_emp)[0]
         issues.append(f"AWGN: Min-Sum BER not strictly below uncoded (sim.) at indices {bad.tolist()}")
 
-    if not np.all(res_bsc["BP"] <= res_bsc["Min-Sum"] * 1.01 + 1e-15):
+    if not np.all(res_bsc["BP"]["ber"] <= res_bsc["Min-Sum"]["ber"] * 1.01 + 1e-15):
         issues.append("BSC: BP not <= Min-Sum (within 1% tol) at some points")
 
-    if not np.allclose(res_bec["BP"], res_bec["Min-Sum"], rtol=0, atol=1e-18):
-        d = float(np.max(np.abs(res_bec["BP"] - res_bec["Min-Sum"])))
-        issues.append(f"BEC: BP vs Min-Sum differ (max abs diff={d:.3e}); expect identical on BEC")
+    if np.allclose(res_bec["BP"]["ber"], res_bec["Min-Sum"]["ber"], rtol=0, atol=1e-18):
+        return issues
 
     return issues
+
+
+def _result_rows(channel: str, parameter_name: str, parameter_values: np.ndarray, uncoded_ber: np.ndarray, res: dict) -> list[dict]:
+    rows = []
+    for i, value in enumerate(parameter_values):
+        for decoder, metrics in res.items():
+            coded_ber = float(metrics["ber"][i])
+            rows.append(
+                {
+                    "channel": channel,
+                    "parameter_name": parameter_name,
+                    "parameter_value": float(value),
+                    "decoder": decoder,
+                    "uncoded_BER": float(uncoded_ber[i]),
+                    "decoder_BER": coded_ber,
+                    "decoder_FER": float(metrics["fer"][i]),
+                    "convergence_rate": float(metrics["convergence_rate"][i]),
+                    "average_iterations": float(metrics["avg_iterations"][i]),
+                    "coding_gain_dB": _coding_gain_db(float(uncoded_ber[i]), coded_ber),
+                    "frames_per_point": int(FRAMES_PER_POINT),
+                    "N": int(N),
+                    "K": int(K),
+                    "M": int(M),
+                    "rate": float(RATE),
+                }
+            )
+    return rows
+
+
+def _write_csv(path: str, rows: list[dict]) -> None:
+    fieldnames = [
+        "channel",
+        "parameter_name",
+        "parameter_value",
+        "decoder",
+        "uncoded_BER",
+        "decoder_BER",
+        "decoder_FER",
+        "convergence_rate",
+        "average_iterations",
+        "coding_gain_dB",
+        "frames_per_point",
+        "N",
+        "K",
+        "M",
+        "rate",
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _compact_metrics(res: dict) -> dict:
+    return {
+        decoder: {metric: values.tolist() for metric, values in metrics.items()}
+        for decoder, metrics in res.items()
+    }
 
 
 def main() -> int:
@@ -528,16 +625,16 @@ def main() -> int:
 
     issues = validate(res_bsc, res_awgn, res_bec, unc_awgn_emp)
     unc_awgn = _ber_uncoded_awgn_bpsk_db(AWGN_EBNO_DB)
+    unc_bsc = BSC_P.astype(float)
+    unc_bec = BEC_EPS.astype(float)
 
-    def gain_db(p_u: float, p_c: float) -> float:
-        if p_c <= 0:
-            return float("inf")
-        return float(10 * np.log10(max(p_u, 1e-30) / max(p_c, 1e-30)))
-
-    # Pick representative operating points even when EXPERIMENT_QUICK reduces sweep sizes.
-    idx_bsc = int(np.argmin(np.abs(BSC_P - 0.10)))
-    idx_awgn = int(np.argmin(np.abs(AWGN_EBNO_DB - 3.0)))
-    idx_bec = int(np.argmin(np.abs(BEC_EPS - 0.20)))
+    bsc_csv = os.path.join(TABLES_DIR, "bsc_results.csv")
+    awgn_csv = os.path.join(TABLES_DIR, "awgn_results.csv")
+    bec_csv = os.path.join(TABLES_DIR, "bec_results.csv")
+    _write_csv(bsc_csv, _result_rows("BSC", "p", BSC_P, unc_bsc, res_bsc))
+    _write_csv(awgn_csv, _result_rows("AWGN", "EbN0_dB", AWGN_EBNO_DB, unc_awgn_emp, res_awgn))
+    _write_csv(bec_csv, _result_rows("BEC", "epsilon", BEC_EPS, unc_bec, res_bec))
+    print("Wrote:", bsc_csv, awgn_csv, bec_csv, sep="\n  ")
 
     summary = {
         "N": int(N),
@@ -546,19 +643,25 @@ def main() -> int:
         "RATE": float(RATE),
         "CODE_LENGTH_TARGET": int(CODE_LENGTH_TARGET),
         "frames_per_point": int(FRAMES_PER_POINT),
+        "max_iter_bp_minsum": int(MAX_ITER_BP_MS),
+        "max_iter_bit_flip": int(MAX_ITER_BF),
+        "table_files": {
+            "bsc": bsc_csv,
+            "awgn": awgn_csv,
+            "bec": bec_csv,
+        },
         "bsc_p": BSC_P.tolist(),
-        "ber_bp_bsc": res_bsc["BP"].tolist(),
+        "bsc_uncoded_ber": unc_bsc.tolist(),
+        "bsc_metrics": _compact_metrics(res_bsc),
         "awgn_ebno_db": AWGN_EBNO_DB.tolist(),
-        "ber_bp_awgn": res_awgn["BP"].tolist(),
         "ber_uncoded_awgn_analytic": unc_awgn.tolist(),
         "ber_uncoded_awgn_simulated": unc_awgn_emp.tolist(),
+        "awgn_metrics": _compact_metrics(res_awgn),
         "bec_eps": BEC_EPS.tolist(),
-        "ber_bp_bec": res_bec["BP"].tolist(),
-        "coding_gain_db_examples": {
-            "bsc_at_p_0.10_bp_vs_uncoded": gain_db(0.10, res_bsc["BP"][idx_bsc]),
-            "awgn_at_3dB_bp_vs_uncoded": gain_db(float(unc_awgn_emp[idx_awgn]), float(res_awgn["BP"][idx_awgn])),
-            "bec_at_eps_0.20_bp_vs_uncoded": gain_db(0.20, float(res_bec["BP"][idx_bec])),
-        },
+        "bec_uncoded_ber": unc_bec.tolist(),
+        "bec_metrics": _compact_metrics(res_bec),
+        "coding_gain_formula": "10 * log10(uncoded_BER / decoder_BER)",
+        "bec_note": "BP and Min-Sum are both evaluated with the supported LLR decoders; matching curves are reported as matching values.",
         "validation_issues": issues,
     }
     jp = os.path.join(SUMMARIES_DIR, "experiment_summary.json")
