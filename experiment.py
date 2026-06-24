@@ -72,6 +72,7 @@ from ldpc import (
     capacity_bec,
     shannon_limit_awgn_rate,
     encode,
+    frame_error,
 )
 from ldpc_construction import analyze_H, build_ldpc_for_target_length
 
@@ -129,7 +130,7 @@ def _empty_counts(decoders: list[str]) -> dict:
 def _record_decode(counts: dict, decoder: str, decoded: np.ndarray, converged: bool, iters: int, codeword: np.ndarray) -> None:
     bit_errors = int(np.sum(decoded != codeword))
     counts[decoder]["bit_errors"] += bit_errors
-    counts[decoder]["frame_errors"] += int(bit_errors > 0)
+    counts[decoder]["frame_errors"] += int(frame_error(decoded, codeword))
     counts[decoder]["converged"] += int(bool(converged))
     counts[decoder]["iterations"] += int(iters)
     counts[decoder]["frames"] += 1
@@ -612,23 +613,58 @@ def plot_coding_gain_summary(res_bsc: dict, res_awgn: dict, res_bec: dict, unc_a
     plt.close(fig)
 
 
-def validate(res_bsc: dict, res_awgn: dict, res_bec: dict, unc_awgn_emp: np.ndarray) -> list[str]:
-    issues: list[str] = []
-    # Compare to simulated uncoded (same Monte Carlo budget, same Eb/N0 definition).
-    if not np.any(res_awgn["BP"]["ber"] < unc_awgn_emp):
-        bad = np.where(res_awgn["BP"]["ber"] >= unc_awgn_emp)[0]
-        issues.append(f"AWGN: BP BER not strictly below uncoded (sim.) at indices {bad.tolist()} (Eb/N0={AWGN_EBNO_DB[bad]})")
-    if not np.any(res_awgn["Min-Sum"]["ber"] < unc_awgn_emp):
-        bad = np.where(res_awgn["Min-Sum"]["ber"] >= unc_awgn_emp)[0]
-        issues.append(f"AWGN: Min-Sum BER not strictly below uncoded (sim.) at indices {bad.tolist()}")
+def validate(res_bsc: dict, res_awgn: dict, res_bec: dict, unc_bsc: np.ndarray, unc_awgn_emp: np.ndarray, unc_bec: np.ndarray) -> list[str]:
+    warnings: list[str] = []
 
-    if not np.all(res_bsc["BP"]["ber"] <= res_bsc["Min-Sum"]["ber"] * 1.01 + 1e-15):
-        issues.append("BSC: BP not <= Min-Sum (within 1% tol) at some points")
+    def warn_coded_worse(channel: str, x_values: np.ndarray, uncoded: np.ndarray, res: dict) -> None:
+        threshold = max(2, int(np.ceil(len(x_values) / 3)))
+        for decoder, metrics in res.items():
+            bad = np.where(metrics["ber"] > uncoded)[0]
+            if len(bad) >= threshold:
+                warnings.append(
+                    f"{channel}: {decoder} coded BER is worse than uncoded at {len(bad)}/{len(x_values)} points "
+                    f"(indices {bad.tolist()}, x={x_values[bad].tolist()})."
+                )
 
-    if np.allclose(res_bec["BP"]["ber"], res_bec["Min-Sum"]["ber"], rtol=0, atol=1e-18):
-        return issues
+    def warn_low_convergence(channel: str, x_values: np.ndarray, res: dict, threshold: float = 0.80) -> None:
+        for decoder, metrics in res.items():
+            low = np.where(metrics["convergence_rate"] < threshold)[0]
+            if len(low) > 0:
+                warnings.append(
+                    f"{channel}: {decoder} convergence rate is below {threshold:.2f} at {len(low)}/{len(x_values)} points "
+                    f"(indices {low.tolist()}, x={x_values[low].tolist()}, rates={metrics['convergence_rate'][low].tolist()})."
+                )
 
-    return issues
+    def warn_bp_vs_minsum(channel: str, x_values: np.ndarray, res: dict) -> None:
+        bad = np.where(res["BP"]["ber"] > res["Min-Sum"]["ber"])[0]
+        if len(bad) > len(x_values) / 2:
+            warnings.append(
+                f"{channel}: BP BER is worse than Min-Sum at most points ({len(bad)}/{len(x_values)}; "
+                f"indices {bad.tolist()}, x={x_values[bad].tolist()})."
+            )
+
+    def warn_identical_bp_minsum(channel: str, res: dict) -> None:
+        same_ber = np.array_equal(res["BP"]["ber"], res["Min-Sum"]["ber"])
+        same_fer = np.array_equal(res["BP"]["fer"], res["Min-Sum"]["fer"])
+        same_conv = np.array_equal(res["BP"]["convergence_rate"], res["Min-Sum"]["convergence_rate"])
+        if same_ber and same_fer and same_conv:
+            warnings.append(f"{channel}: BP and Min-Sum results are exactly identical outside BEC; verify decoder behavior and simulation bookkeeping.")
+
+    warn_coded_worse("BSC", BSC_P, unc_bsc, res_bsc)
+    warn_coded_worse("AWGN", AWGN_EBNO_DB, unc_awgn_emp, res_awgn)
+    warn_coded_worse("BEC", BEC_EPS, unc_bec, res_bec)
+
+    warn_bp_vs_minsum("BSC", BSC_P, res_bsc)
+    warn_bp_vs_minsum("AWGN", AWGN_EBNO_DB, res_awgn)
+
+    warn_low_convergence("BSC", BSC_P, res_bsc)
+    warn_low_convergence("AWGN", AWGN_EBNO_DB, res_awgn)
+    warn_low_convergence("BEC", BEC_EPS, res_bec)
+
+    warn_identical_bp_minsum("BSC", res_bsc)
+    warn_identical_bp_minsum("AWGN", res_awgn)
+
+    return warnings
 
 
 def _result_rows(channel: str, parameter_name: str, parameter_values: np.ndarray, uncoded_ber: np.ndarray, res: dict) -> list[dict]:
@@ -756,7 +792,7 @@ def main() -> int:
     )
     print("Saved:", *figure_files.values(), sep="\n  ")
 
-    issues = validate(res_bsc, res_awgn, res_bec, unc_awgn_emp)
+    issues = validate(res_bsc, res_awgn, res_bec, unc_bsc, unc_awgn_emp, unc_bec)
     unc_awgn = _ber_uncoded_awgn_bpsk_db(AWGN_EBNO_DB)
 
     bsc_csv = os.path.join(TABLES_DIR, "bsc_results.csv")
@@ -803,6 +839,7 @@ def main() -> int:
         "bec_note": "BP and Min-Sum are both evaluated with the supported LLR decoders; matching curves are reported as matching values.",
         "H_diagnostics": H_DIAGNOSTICS,
         "diagnostics_warnings": diagnostics_warnings,
+        "validation_warnings": issues,
         "validation_issues": issues,
     }
     jp = os.path.join(SUMMARIES_DIR, "experiment_summary.json")

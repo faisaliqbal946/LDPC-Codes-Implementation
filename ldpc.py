@@ -99,6 +99,26 @@ def encode(G, message, col_order):
     return codeword
 
 
+def syndrome(H, word):
+    """Return the binary syndrome H @ word over GF(2)."""
+    return (np.asarray(H, dtype=int) @ np.asarray(word, dtype=int)) % 2
+
+
+def syndrome_weight(H, word):
+    """Return the number of unsatisfied parity checks."""
+    return int(np.sum(syndrome(H, word)))
+
+
+def is_codeword(H, word):
+    """Return True when word satisfies all parity checks in H."""
+    return syndrome_weight(H, word) == 0
+
+
+def frame_error(decoded, original):
+    """Return True if decoded and original differ in at least one bit."""
+    return bool(np.any(np.asarray(decoded, dtype=int) != np.asarray(original, dtype=int)))
+
+
 # -----------------------------------------------------------------------------
 # Tanner graph: for each check, list of bit indices; for each bit, list of checks
 # -----------------------------------------------------------------------------
@@ -174,13 +194,13 @@ def bit_flip_decode(H, received, max_iter=50):
         c = np.broadcast_to(c, H.shape[1])
     m, n = H.shape
     for it in range(1, max_iter + 1):
-        syndrome = (H @ c) % 2
-        if not syndrome.any():
+        syn = syndrome(H, c)
+        if not syn.any():
             return c, True, it
-        unsat = H.T @ syndrome
+        unsat = H.T @ syn
         worst = int(np.argmax(unsat))
         c[worst] ^= 1
-    return c, np.all((H @ c) % 2 == 0), max_iter
+    return c, is_codeword(H, c), max_iter
 
 
 def belief_propagation_decode(H, llr, max_iter=50):
@@ -255,9 +275,9 @@ def belief_propagation_decode(H, llr, max_iter=50):
                 local = [idx for idx, nb in enumerate(cn[j]) if nb == i][0]
                 total += c2v[j_to_edge[j][local]]
             decoded[i] = 1 if total < 0 else 0
-        if np.all((H @ decoded) % 2 == 0):
+        if is_codeword(H, decoded):
             return decoded, True, it
-    return decoded, np.all((H @ decoded) % 2 == 0), max_iter
+    return decoded, is_codeword(H, decoded), max_iter
 
 
 def belief_propagation_decode_with_history(H, llr, max_iter=50):
@@ -327,16 +347,16 @@ def belief_propagation_decode_with_history(H, llr, max_iter=50):
                 total += c2v[j_to_edge[j][local]]
             total_llr_per_bit[i] = total
             decoded[i] = 1 if total < 0 else 0
-        syndrome = (H @ decoded) % 2
+        syn = syndrome(H, decoded)
         history.append({
             "iter": it,
-            "syndrome": syndrome.copy(),
+            "syndrome": syn.copy(),
             "decoded": decoded.copy(),
             "total_llr": total_llr_per_bit.copy(),
         })
-        if np.all(syndrome == 0):
+        if not syn.any():
             return decoded, True, it, history
-    return decoded, np.all((H @ decoded) % 2 == 0), max_iter, history
+    return decoded, is_codeword(H, decoded), max_iter, history
 
 
 def minsum_decode(H, llr, max_iter=50, alpha=0.75):
@@ -395,9 +415,9 @@ def minsum_decode(H, llr, max_iter=50, alpha=0.75):
                 local = [idx for idx, nb in enumerate(cn[j]) if nb == i][0]
                 total += c2v[j_to_edge[j][local]]
             decoded[i] = 1 if total < 0 else 0
-        if np.all((H @ decoded) % 2 == 0):
+        if is_codeword(H, decoded):
             return decoded, True, it
-    return decoded, np.all((H @ decoded) % 2 == 0), max_iter
+    return decoded, is_codeword(H, decoded), max_iter
 
 
 # -----------------------------------------------------------------------------
