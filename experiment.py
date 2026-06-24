@@ -73,7 +73,7 @@ from ldpc import (
     shannon_limit_awgn_rate,
     encode,
 )
-from ldpc_construction import build_ldpc_for_target_length
+from ldpc_construction import analyze_H, build_ldpc_for_target_length
 
 # --- User-requested parameters -------------------------------------------------
 CODE_LENGTH_TARGET = 200  # Gallager wr=6 => use n=204 (see build_ldpc_for_target_length)
@@ -116,6 +116,7 @@ RNG = np.random.default_rng(RNG_SEED)
 H, G, col_order, K, M, RATE, N = build_ldpc_for_target_length(
     CODE_LENGTH_TARGET, wc=3, seed=CONSTRUCTION_SEED, prefer="ge"
 )
+H_DIAGNOSTICS = analyze_H(H)
 
 
 def _empty_counts(decoders: list[str]) -> dict:
@@ -766,6 +767,13 @@ def main() -> int:
     _write_csv(bec_csv, _result_rows("BEC", "epsilon", BEC_EPS, unc_bec, res_bec))
     print("Wrote:", bsc_csv, awgn_csv, bec_csv, sep="\n  ")
 
+    diagnostics_warnings = []
+    estimated_4_cycles = H_DIAGNOSTICS.get("estimated_4_cycles")
+    if estimated_4_cycles is not None and estimated_4_cycles > 0:
+        diagnostics_warnings.append(
+            f"H contains an estimated {estimated_4_cycles} 4-cycles; short cycles can reduce iterative decoder performance."
+        )
+
     summary = {
         "N": int(N),
         "K": int(K),
@@ -793,6 +801,8 @@ def main() -> int:
         "bec_metrics": _compact_metrics(res_bec),
         "coding_gain_formula": "10 * log10(uncoded_BER / decoder_BER)",
         "bec_note": "BP and Min-Sum are both evaluated with the supported LLR decoders; matching curves are reported as matching values.",
+        "H_diagnostics": H_DIAGNOSTICS,
+        "diagnostics_warnings": diagnostics_warnings,
         "validation_issues": issues,
     }
     jp = os.path.join(SUMMARIES_DIR, "experiment_summary.json")

@@ -76,6 +76,53 @@ The resulting number of rows m = rank(H), so the actual code rate becomes R = (n
     return rref[:rank].copy()
 
 
+def analyze_H(H):
+    """Return structural diagnostics for a binary parity-check matrix.
+
+    The 4-cycle count is computed from column-pair overlaps. If two columns
+    share s parity checks, they contribute C(s, 2) distinct 4-cycles.
+    """
+    A = np.asarray(H, dtype=int) % 2
+    if A.ndim != 2:
+        raise ValueError("H must be a 2D parity-check matrix.")
+
+    m, n = A.shape
+    _, pivots = gf2_rref(A)
+    rank = len(pivots)
+    k = n - rank
+    row_weights = A.sum(axis=1)
+    col_weights = A.sum(axis=0)
+
+    diagnostics = {
+        "M": int(m),
+        "N": int(n),
+        "rank_gf2": int(rank),
+        "K": int(k),
+        "rate": float(k / n) if n else 0.0,
+        "density": float(A.mean()) if A.size else 0.0,
+        "row_weight_min": int(row_weights.min()) if m else 0,
+        "row_weight_max": int(row_weights.max()) if m else 0,
+        "row_weight_mean": float(row_weights.mean()) if m else 0.0,
+        "column_weight_min": int(col_weights.min()) if n else 0,
+        "column_weight_max": int(col_weights.max()) if n else 0,
+        "column_weight_mean": float(col_weights.mean()) if n else 0.0,
+        "estimated_4_cycles": None,
+        "four_cycle_method": "column_pair_overlap",
+        "four_cycle_feasible": False,
+    }
+
+    # For the project sizes this is exact and inexpensive. Keep a guard for
+    # very large future matrices so analysis never dominates simulation setup.
+    if n <= 5000:
+        overlaps = A.T @ A
+        upper = np.triu_indices(n, k=1)
+        shared_checks = overlaps[upper]
+        diagnostics["estimated_4_cycles"] = int(np.sum(shared_checks * (shared_checks - 1) // 2))
+        diagnostics["four_cycle_feasible"] = True
+
+    return diagnostics
+
+
 def make_generator(H):
     """Systematic generator matrix construction.
 After column permutation, H is in form [P | I_m].
