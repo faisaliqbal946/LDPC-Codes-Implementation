@@ -44,6 +44,29 @@ TABLE_PATHS = {
     "BEC": TABLES_DIR / "bec_results.csv",
 }
 
+REFERENCES = [
+    {
+        "id": "[1]",
+        "text": "Gallager, R. G., Low-Density Parity-Check Codes, MIT Press, 1963.",
+        "url": "https://mitpress.mit.edu/9780262570940/low-density-parity-check-codes/",
+    },
+    {
+        "id": "[2]",
+        "text": "MacKay, D. J. C., Information Theory, Inference, and Learning Algorithms, Cambridge University Press, 2003.",
+        "url": "https://www.inference.org.uk/itila/book.html",
+    },
+    {
+        "id": "[3]",
+        "text": "Richardson, T. and Urbanke, R., Modern Coding Theory, Cambridge University Press, 2008.",
+        "url": "https://doi.org/10.1017/CBO9780511791338",
+    },
+    {
+        "id": "[4]",
+        "text": "Shannon, C. E., A Mathematical Theory of Communication, Bell System Technical Journal, 1948.",
+        "url": "https://doi.org/10.1002/j.1538-7305.1948.tb01338.x",
+    },
+]
+
 
 class ReportPDF(FPDF):
     def header(self):
@@ -93,6 +116,19 @@ class ReportPDF(FPDF):
         self.set_text_color(40, 40, 40)
         self.set_fill_color(245, 247, 250)
         self.multi_cell(0, 5, clean_text(text), fill=True, new_x="LMARGIN", new_y="NEXT")
+        self.ln(1)
+
+    def reference_list(self, refs: list[dict]):
+        for ref in refs:
+            self.set_font("Helvetica", "", 10.3)
+            self.set_text_color(30, 30, 30)
+            self.write(5.5, clean_text(f"{ref['id']} {ref['text']} "))
+            self.set_text_color(20, 85, 150)
+            try:
+                self.write(5.5, clean_text(ref["url"]), link=ref["url"])
+            except TypeError:
+                self.write(5.5, clean_text(ref["url"]))
+            self.ln(7)
         self.ln(1)
 
 
@@ -286,7 +322,7 @@ def add_sections(pdf: ReportPDF, summary: dict, tables: dict[str, list[dict]]):
     pdf.add_page()
     pdf.section("2. Abstract")
     pdf.body(
-        f"This report presents a large-block LDPC experiment for a Gallager-style ({n},{k}) code with "
+        f"This report presents a large-block LDPC experiment for a Gallager-style ({n},{k}) code [1] with "
         f"{m} parity checks and actual rate R={fmt(rate)}. The study evaluates transmission over the "
         "Binary Symmetric Channel, Additive White Gaussian Noise channel, and Binary Erasure Channel. "
         "Decoder performance is measured using bit error rate, frame error rate, convergence rate, "
@@ -296,16 +332,16 @@ def add_sections(pdf: ReportPDF, summary: dict, tables: dict[str, list[dict]]):
 
     pdf.section("3. Introduction")
     pdf.body(
-        "Low-Density Parity-Check codes are sparse linear block codes decoded by iterative message "
+        "Low-Density Parity-Check codes were introduced by Gallager [1] as sparse linear block codes decoded by iterative message "
         "passing on a Tanner graph. Their practical value comes from sparse parity constraints and "
-        "soft-information decoders such as Belief Propagation and Min-Sum. This report focuses on the "
+        "soft-information decoders such as Belief Propagation and Min-Sum, as commonly presented in coding theory texts [2], [3]. This report focuses on the "
         "large experiment used by the project workflow and does not include toy-code demonstrations."
     )
 
     pdf.section("4. LDPC Code Construction")
     diagnostics = summary.get("H_diagnostics", {})
     pdf.body(
-        f"The experiment targets length 200 and resolves to the nearest valid Gallager construction "
+        f"The experiment targets length 200 and resolves to the nearest valid Gallager construction [1] "
         f"length N={n}. The resulting parity-check matrix has M={m} rows and rank "
         f"{diagnostics.get('rank_gf2', m)} over GF(2), giving actual dimension K={k} and rate "
         f"{fmt(rate)}. The report does not print full H or G matrices; instead it summarizes their "
@@ -328,13 +364,13 @@ def add_sections(pdf: ReportPDF, summary: dict, tables: dict[str, list[dict]]):
         "Encoding uses a generator matrix obtained from GF(2) row reduction of the parity-check matrix. "
         "Messages of length K are mapped to length-N codewords satisfying Hc = 0 over GF(2). The channel "
         "models are BSC with crossover probability p, AWGN with BPSK modulation and Eb/N0 sweeps, and BEC "
-        "with erasure probability epsilon. Uncoded baselines are included so that coding gain can be "
+        "with erasure probability epsilon, following standard information-theoretic channel models [2], [4]. Uncoded baselines are included so that coding gain can be "
         "computed at each simulated point."
     )
 
     pdf.section("6. Decoding Algorithms")
     pdf.body(
-        f"The BSC experiment evaluates Bit-Flip, Belief Propagation, and Min-Sum decoding. The AWGN "
+        f"The BSC experiment evaluates Bit-Flip, Belief Propagation, and Min-Sum decoding [2], [3]. The AWGN "
         f"experiment evaluates BP and Min-Sum using soft LLRs. The BEC experiment evaluates BP and "
         f"Min-Sum only through the supported LLR decoder path; if their curves coincide, the report treats "
         f"that as an observed equality rather than as evidence of different behavior. BP and Min-Sum use "
@@ -346,7 +382,7 @@ def add_sections(pdf: ReportPDF, summary: dict, tables: dict[str, list[dict]]):
         f"Each channel point uses {frames} Monte Carlo frames by default. For every channel point and "
         "decoder, the experiment records uncoded BER, decoder BER, decoder FER, convergence rate, average "
         "iterations, and coding gain in dB. Coding gain is computed directly as "
-        "10 log10(uncoded_BER / decoder_BER). Negative values are retained because they indicate that the "
+        "10 log10(uncoded_BER / decoder_BER). The use of uncoded baselines follows the comparison style used in information theory and coding experiments [2], [4]. Negative values are retained because they indicate that the "
         "coded configuration performed worse than the uncoded baseline at that point."
     )
     pdf.code(
@@ -368,7 +404,7 @@ def add_sections(pdf: ReportPDF, summary: dict, tables: dict[str, list[dict]]):
     add_figure(pdf, "AWGN BER/FER", FIGURE_PATHS["awgn"], LEGACY_FIGURE_FALLBACKS.get("awgn"))
     add_table_summary(pdf, "AWGN", tables["AWGN"])
     pdf.body(
-        "The AWGN results use Eb/N0 as the sweep variable. Shannon references, when present in the figure, "
+        "The AWGN results use Eb/N0 as the sweep variable. Shannon references [4], when present in the figure, "
         "are theoretical markers only. They are not claims that the finite-length implementation approaches "
         "capacity. Negative coding gain can occur at low or poorly matched operating points."
     )
@@ -408,7 +444,7 @@ def add_sections(pdf: ReportPDF, summary: dict, tables: dict[str, list[dict]]):
         "The implementation is an educational Python implementation rather than an optimized LDPC simulator. "
         "The block length is finite, the construction may contain short cycles, and the default Monte Carlo "
         "budget is modest. Results therefore show the behavior of this specific code and decoder setup; they "
-        "should not be generalized as near-capacity performance."
+        "should not be generalized as near-capacity performance [3], [4]."
     )
 
     pdf.section("10. Conclusion")
@@ -421,12 +457,7 @@ def add_sections(pdf: ReportPDF, summary: dict, tables: dict[str, list[dict]]):
     )
 
     pdf.section("11. References")
-    pdf.bullet_list([
-        'R. G. Gallager, "Low-Density Parity-Check Codes," MIT Press, 1963.',
-        'D. J. C. MacKay, "Information Theory, Inference, and Learning Algorithms," Cambridge University Press, 2003.',
-        'T. Richardson and R. Urbanke, "Modern Coding Theory," Cambridge University Press, 2008.',
-        'C. E. Shannon, "A Mathematical Theory of Communication," Bell System Technical Journal, 1948.',
-    ])
+    pdf.reference_list(REFERENCES)
 
 
 def generate():
